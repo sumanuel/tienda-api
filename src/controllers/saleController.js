@@ -1,6 +1,6 @@
 const { Op } = require("sequelize");
 const { sequelize } = require("../config/database");
-const { Sale, SaleItem, Product } = require("../models");
+const { Sale, SaleItem, Product, InventoryMovement } = require("../models");
 
 const list = async (req, res, next) => {
   try {
@@ -77,12 +77,10 @@ const create = async (req, res, next) => {
     for (const item of items) {
       if (!item.productId || !item.productName || !item.quantity) {
         await transaction.rollback();
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Each item requires productId, productName, quantity",
-          });
+        return res.status(400).json({
+          success: false,
+          message: "Each item requires productId, productName, quantity",
+        });
       }
 
       await SaleItem.create(
@@ -116,12 +114,10 @@ const create = async (req, res, next) => {
       where: { saleId: createdSale.id, organizationId: orgId },
     });
 
-    res
-      .status(201)
-      .json({
-        success: true,
-        data: { ...createdSale.toJSON(), items: createdItems },
-      });
+    res.status(201).json({
+      success: true,
+      data: { ...createdSale.toJSON(), items: createdItems },
+    });
   } catch (error) {
     try {
       await transaction.rollback();
@@ -131,23 +127,244 @@ const create = async (req, res, next) => {
 };
 
 const cancel = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
   try {
     const orgId = req.auth.organization.id;
     const { id } = req.params;
 
-    const sale = await Sale.findOne({ where: { id, organizationId: orgId } });
+    const sale = await Sale.findOne({
+      where: { id, organizationId: orgId },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+
     if (!sale) {
+      await transaction.rollback();
       return res
         .status(404)
         .json({ success: false, message: "Sale not found" });
     }
 
-    await sale.update({ status: "cancelled" });
+    if (sale.status === "cancelled") {
+      await transaction.rollback();
+      return res.json({ success: true, message: "Sale already cancelled" });
+    }
+
+    // Restore stock only if it was actually deducted previously
+    if (sale.status === "completed") {
+      const items = await SaleItem.findAll({
+        where: { saleId: sale.id, organizationId: orgId },
+        transaction,
+      });
+
+      for (const item of items) {
+        const qty = parseInt(item.quantity);
+        if (!qty || qty <= 0) continue;
+
+        const product = await Product.findOne({
+          where: { id: item.productId, organizationId: orgId },
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
+        if (!product) continue;
+
+        await product.update(
+          { stock: (product.stock || 0) + qty },
+          { transaction }
+        );
+
+        await InventoryMovement.create(
+          {
+            organizationId: orgId,
+            productId: product.id,
+            type: "sale_cancel",
+            quantityDelta: qty,
+            sourceId: sale.id,
+            eventId: null,
+          },
+          { transaction }
+        );
+      }
+    }
+
+    await sale.update(
+      { status: "cancelled", resolvedAt: new Date() },
+      { transaction }
+    );
+    await transaction.commit();
 
     res.json({ success: true, message: "Sale cancelled" });
   } catch (error) {
+    try {
+      await transaction.rollback();
+    } catch {}
     next(error);
   }
 };
 
-module.exports = { list, getById, create, cancel };
+const resolvePending = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const orgId = req.auth.organization.id;
+    const { id } = req.params;
+    const { action, reason } = req.body || {};
+
+    if (!action || !["approve", "reject"].includes(action)) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "action must be 'approve' or 'reject'",
+      });
+    }
+
+    const sale = await Sale.findOne({
+      where: { id, organizationId: orgId },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+
+    if (!sale) {
+      await transaction.rollback();
+      return res
+        .status(404)
+        .json({ success: false, message: "Sale not found" });
+    }
+
+    if (sale.status !== "pending") {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Only pending sales can be resolved (current: ${sale.status})`,
+      });
+    }
+
+    if (action === "reject") {
+      if (!reason || String(reason).trim().length === 0) {
+        await transaction.rollback();
+        return res
+          .status(400)
+          .json({ success: false, message: "reason is required to reject" });
+      }
+
+      await sale.update(
+        {
+          status: "rejected",
+          rejectedReason: String(reason).trim(),
+          rejectedAt: new Date(),
+          resolvedAt: new Date(),
+        },
+        { transaction }
+      );
+
+      await transaction.commit();
+      return res.json({ success: true, data: sale });
+    }
+
+    // Approve: attempt to deduct stock now
+    const items = await SaleItem.findAll({
+      where: { saleId: sale.id, organizationId: orgId },
+      transaction,
+    });
+
+    if (!items || items.length === 0) {
+      await transaction.rollback();
+      return res
+        .status(400)
+        .json({ success: false, message: "Sale has no items" });
+    }
+
+    const stockProblems = [];
+
+    for (const item of items) {
+      const qty = parseInt(item.quantity);
+      if (!qty || qty <= 0) continue;
+
+      const product = await Product.findOne({
+        where: { id: item.productId, organizationId: orgId },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+
+      if (!product) {
+        stockProblems.push({
+          productId: item.productId,
+          reason: "product not found",
+          required: qty,
+          available: 0,
+        });
+        continue;
+      }
+
+      const available = parseInt(product.stock || 0);
+      if (available < qty) {
+        stockProblems.push({
+          productId: product.id,
+          name: product.name,
+          required: qty,
+          available,
+        });
+      }
+    }
+
+    if (stockProblems.length > 0) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Insufficient stock to approve pending sale",
+        data: { stockProblems },
+      });
+    }
+
+    // Deduct stock + record movements
+    for (const item of items) {
+      const qty = parseInt(item.quantity);
+      if (!qty || qty <= 0) continue;
+
+      const product = await Product.findOne({
+        where: { id: item.productId, organizationId: orgId },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!product) continue;
+
+      await product.update(
+        { stock: (product.stock || 0) - qty },
+        { transaction }
+      );
+
+      await InventoryMovement.create(
+        {
+          organizationId: orgId,
+          productId: product.id,
+          type: "sale",
+          quantityDelta: -qty,
+          sourceId: sale.id,
+          eventId: null,
+        },
+        { transaction }
+      );
+    }
+
+    await sale.update(
+      {
+        status: "completed",
+        rejectedReason: null,
+        rejectedAt: null,
+        resolvedAt: new Date(),
+      },
+      { transaction }
+    );
+
+    await transaction.commit();
+    return res.json({ success: true, data: sale });
+  } catch (error) {
+    try {
+      await transaction.rollback();
+    } catch {}
+    next(error);
+  }
+};
+
+module.exports = { list, getById, create, cancel, resolvePending };

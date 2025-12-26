@@ -50,6 +50,18 @@ const Sale = sequelize.define(
       allowNull: false,
       defaultValue: "completed",
     },
+    rejectedReason: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    rejectedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    resolvedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
     notes: { type: DataTypes.TEXT, allowNull: true },
 
     createdAt: {
@@ -68,6 +80,7 @@ const Sale = sequelize.define(
     indexes: [
       { fields: ["organizationId"] },
       { fields: ["organizationId", "createdAt"] },
+      { fields: ["organizationId", "status"] },
     ],
   }
 );

@@ -42,7 +42,10 @@ const push = async (req, res, next) => {
       const payload = evt?.payload || {};
 
       if (!eventId || !eventType) {
-        rejected.push({ eventId: eventId || null, reason: "eventId and type are required" });
+        rejected.push({
+          eventId: eventId || null,
+          reason: "eventId and type are required",
+        });
         continue;
       }
 
@@ -97,7 +100,10 @@ const push = async (req, res, next) => {
       if (eventType === "customer.upserted") {
         const id = entityId || payload.id;
         if (!id || !payload.name) {
-          rejected.push({ eventId, reason: "customer id and name are required" });
+          rejected.push({
+            eventId,
+            reason: "customer id and name are required",
+          });
           continue;
         }
 
@@ -123,7 +129,10 @@ const push = async (req, res, next) => {
         const key = payload.key;
         const value = payload.value;
         if (!key || value === undefined || value === null) {
-          rejected.push({ eventId, reason: "setting key and value are required" });
+          rejected.push({
+            eventId,
+            reason: "setting key and value are required",
+          });
           continue;
         }
 
@@ -169,7 +178,12 @@ const push = async (req, res, next) => {
         );
 
         acked.push(eventId);
-        results.push({ eventId, status: "applied", entity: "exchangeRate", id: created.id });
+        results.push({
+          eventId,
+          status: "applied",
+          entity: "exchangeRate",
+          id: created.id,
+        });
         continue;
       }
 
@@ -179,15 +193,26 @@ const push = async (req, res, next) => {
         const items = payload.items || saleData.items;
 
         if (!saleId || !Array.isArray(items) || items.length === 0) {
-          rejected.push({ eventId, reason: "sale id and items[] are required" });
+          rejected.push({
+            eventId,
+            reason: "sale id and items[] are required",
+          });
           continue;
         }
 
         // If sale already exists in org, treat as duplicate idempotently
-        const existingSale = await Sale.findOne({ where: { id: saleId, organizationId: orgId }, transaction });
+        const existingSale = await Sale.findOne({
+          where: { id: saleId, organizationId: orgId },
+          transaction,
+        });
         if (existingSale) {
           acked.push(eventId);
-          results.push({ eventId, status: "duplicate", entity: "sale", id: saleId });
+          results.push({
+            eventId,
+            status: "duplicate",
+            entity: "sale",
+            id: saleId,
+          });
           continue;
         }
 
@@ -197,11 +222,17 @@ const push = async (req, res, next) => {
           const productId = item.productId;
           const quantity = parseInt(item.quantity);
           if (!productId || !quantity || quantity <= 0) {
-            stockProblems.push({ productId, reason: "invalid productId/quantity" });
+            stockProblems.push({
+              productId,
+              reason: "invalid productId/quantity",
+            });
             continue;
           }
 
-          const product = await Product.findOne({ where: { id: productId, organizationId: orgId }, transaction });
+          const product = await Product.findOne({
+            where: { id: productId, organizationId: orgId },
+            transaction,
+          });
           if (!product) {
             stockProblems.push({ productId, reason: "product not found" });
             continue;
@@ -217,7 +248,8 @@ const push = async (req, res, next) => {
           }
         }
 
-        const status = stockProblems.length > 0 ? "pending" : (saleData.status || "completed");
+        const status =
+          stockProblems.length > 0 ? "pending" : saleData.status || "completed";
 
         const createdSale = await Sale.create(
           {
@@ -255,7 +287,7 @@ const push = async (req, res, next) => {
               quantity: item.quantity,
               price: item.price ?? 0,
               priceUSD: item.priceUSD ?? 0,
-              subtotal: item.subtotal ?? (item.quantity * (item.price ?? 0)),
+              subtotal: item.subtotal ?? item.quantity * (item.price ?? 0),
             },
             { transaction }
           );
@@ -263,7 +295,10 @@ const push = async (req, res, next) => {
 
         if (createdSale.status === "completed") {
           for (const item of items) {
-            const product = await Product.findOne({ where: { id: item.productId, organizationId: orgId }, transaction });
+            const product = await Product.findOne({
+              where: { id: item.productId, organizationId: orgId },
+              transaction,
+            });
             if (!product) continue;
 
             const qty = parseInt(item.quantity);
@@ -305,7 +340,10 @@ const push = async (req, res, next) => {
           continue;
         }
 
-        const sale = await Sale.findOne({ where: { id: saleId, organizationId: orgId }, transaction });
+        const sale = await Sale.findOne({
+          where: { id: saleId, organizationId: orgId },
+          transaction,
+        });
         if (!sale) {
           // If it doesn't exist, treat as rejected (can't cancel unknown sale)
           rejected.push({ eventId, reason: "sale not found" });
@@ -314,15 +352,26 @@ const push = async (req, res, next) => {
 
         if (sale.status === "cancelled") {
           acked.push(eventId);
-          results.push({ eventId, status: "duplicate", entity: "sale", id: saleId });
+          results.push({
+            eventId,
+            status: "duplicate",
+            entity: "sale",
+            id: saleId,
+          });
           continue;
         }
 
         // If sale was completed, restore stock
         if (sale.status === "completed") {
-          const items = await SaleItem.findAll({ where: { saleId: sale.id, organizationId: orgId }, transaction });
+          const items = await SaleItem.findAll({
+            where: { saleId: sale.id, organizationId: orgId },
+            transaction,
+          });
           for (const item of items) {
-            const product = await Product.findOne({ where: { id: item.productId, organizationId: orgId }, transaction });
+            const product = await Product.findOne({
+              where: { id: item.productId, organizationId: orgId },
+              transaction,
+            });
             if (!product) continue;
 
             const qty = parseInt(item.quantity);
@@ -348,12 +397,21 @@ const push = async (req, res, next) => {
         await sale.update({ status: "cancelled" }, { transaction });
 
         acked.push(eventId);
-        results.push({ eventId, status: "applied", entity: "sale", id: saleId, saleStatus: "cancelled" });
+        results.push({
+          eventId,
+          status: "applied",
+          entity: "sale",
+          id: saleId,
+          saleStatus: "cancelled",
+        });
         continue;
       }
 
       // Unknown event type
-      rejected.push({ eventId, reason: `unsupported event type: ${eventType}` });
+      rejected.push({
+        eventId,
+        reason: `unsupported event type: ${eventType}`,
+      });
     }
 
     await transaction.commit();
@@ -388,21 +446,39 @@ const pull = async (req, res, next) => {
 
     const whereSince = { organizationId: orgId, updatedAt: { [Op.gt]: since } };
 
-    const [
-      products,
-      customers,
-      sales,
-      saleItems,
-      settings,
-      exchangeRates,
-    ] = await Promise.all([
-      Product.findAll({ where: whereSince, order: [["updatedAt", "ASC"]], limit: 5000 }),
-      Customer.findAll({ where: whereSince, order: [["updatedAt", "ASC"]], limit: 5000 }),
-      Sale.findAll({ where: whereSince, order: [["updatedAt", "ASC"]], limit: 5000 }),
-      SaleItem.findAll({ where: whereSince, order: [["updatedAt", "ASC"]], limit: 10000 }),
-      Setting.findAll({ where: whereSince, order: [["updatedAt", "ASC"]], limit: 2000 }),
-      ExchangeRate.findAll({ where: whereSince, order: [["updatedAt", "ASC"]], limit: 2000 }),
-    ]);
+    const [products, customers, sales, saleItems, settings, exchangeRates] =
+      await Promise.all([
+        Product.findAll({
+          where: whereSince,
+          order: [["updatedAt", "ASC"]],
+          limit: 5000,
+        }),
+        Customer.findAll({
+          where: whereSince,
+          order: [["updatedAt", "ASC"]],
+          limit: 5000,
+        }),
+        Sale.findAll({
+          where: whereSince,
+          order: [["updatedAt", "ASC"]],
+          limit: 5000,
+        }),
+        SaleItem.findAll({
+          where: whereSince,
+          order: [["updatedAt", "ASC"]],
+          limit: 10000,
+        }),
+        Setting.findAll({
+          where: whereSince,
+          order: [["updatedAt", "ASC"]],
+          limit: 2000,
+        }),
+        ExchangeRate.findAll({
+          where: whereSince,
+          order: [["updatedAt", "ASC"]],
+          limit: 2000,
+        }),
+      ]);
 
     res.json({
       success: true,

@@ -124,8 +124,14 @@ Setting.belongsTo(Organization, {
   as: "organization",
 });
 
-Organization.hasMany(SyncEvent, { foreignKey: "organizationId", as: "syncEvents" });
-SyncEvent.belongsTo(Organization, { foreignKey: "organizationId", as: "organization" });
+Organization.hasMany(SyncEvent, {
+  foreignKey: "organizationId",
+  as: "syncEvents",
+});
+SyncEvent.belongsTo(Organization, {
+  foreignKey: "organizationId",
+  as: "organization",
+});
 
 Organization.hasMany(InventoryMovement, {
   foreignKey: "organizationId",
@@ -136,8 +142,14 @@ InventoryMovement.belongsTo(Organization, {
   as: "organization",
 });
 
-InventoryMovement.belongsTo(Product, { foreignKey: "productId", as: "product" });
-Product.hasMany(InventoryMovement, { foreignKey: "productId", as: "inventoryMovements" });
+InventoryMovement.belongsTo(Product, {
+  foreignKey: "productId",
+  as: "product",
+});
+Product.hasMany(InventoryMovement, {
+  foreignKey: "productId",
+  as: "inventoryMovements",
+});
 
 module.exports = {
   Organization,
