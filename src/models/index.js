@@ -11,6 +11,8 @@ const AccountPayable = require("./AccountPayable");
 const AccountPayment = require("./AccountPayment");
 const ExchangeRate = require("./ExchangeRate");
 const Setting = require("./Setting");
+const SyncEvent = require("./SyncEvent");
+const InventoryMovement = require("./InventoryMovement");
 
 // Associations
 Organization.hasMany(Membership, {
@@ -122,6 +124,21 @@ Setting.belongsTo(Organization, {
   as: "organization",
 });
 
+Organization.hasMany(SyncEvent, { foreignKey: "organizationId", as: "syncEvents" });
+SyncEvent.belongsTo(Organization, { foreignKey: "organizationId", as: "organization" });
+
+Organization.hasMany(InventoryMovement, {
+  foreignKey: "organizationId",
+  as: "inventoryMovements",
+});
+InventoryMovement.belongsTo(Organization, {
+  foreignKey: "organizationId",
+  as: "organization",
+});
+
+InventoryMovement.belongsTo(Product, { foreignKey: "productId", as: "product" });
+Product.hasMany(InventoryMovement, { foreignKey: "productId", as: "inventoryMovements" });
+
 module.exports = {
   Organization,
   User,
@@ -136,4 +153,6 @@ module.exports = {
   AccountPayment,
   ExchangeRate,
   Setting,
+  SyncEvent,
+  InventoryMovement,
 };

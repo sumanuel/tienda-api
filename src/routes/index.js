@@ -8,6 +8,7 @@ const supplierRoutes = require("./suppliers.routes");
 const salesRoutes = require("./sales.routes");
 const exchangeRateRoutes = require("./exchangeRates.routes");
 const settingsRoutes = require("./settings.routes");
+const syncRoutes = require("./sync.routes");
 
 const router = express.Router();
 
@@ -19,6 +20,7 @@ router.use("/suppliers", supplierRoutes);
 router.use("/sales", salesRoutes);
 router.use("/exchange-rates", exchangeRateRoutes);
 router.use("/settings", settingsRoutes);
+router.use("/sync", syncRoutes);
 
 router.get("/", (req, res) => {
   res.json({
@@ -33,6 +35,7 @@ router.get("/", (req, res) => {
       "/sales",
       "/exchange-rates",
       "/settings",
+      "/sync",
     ],
   });
 });
