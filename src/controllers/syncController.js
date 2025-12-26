@@ -216,7 +216,8 @@ const push = async (req, res, next) => {
           continue;
         }
 
-        // Validate stock strictly (multi-user). If insufficient => pending.
+        // Validate items + stock strictly (multi-user).
+        // If any item references a product that doesn't exist => reject (avoids FK violation).
         const stockProblems = [];
         for (const item of items) {
           const productId = item.productId;
@@ -248,14 +249,41 @@ const push = async (req, res, next) => {
           }
         }
 
+        const invalidProblems = stockProblems.filter(
+          (p) =>
+            p.reason === "product not found" ||
+            p.reason === "invalid productId/quantity"
+        );
+
+        if (invalidProblems.length > 0) {
+          rejected.push({
+            eventId,
+            reason: "sale items reference missing/invalid products",
+            details: invalidProblems,
+          });
+          continue;
+        }
+
         const status =
           stockProblems.length > 0 ? "pending" : saleData.status || "completed";
+
+        let customerIdToUse = saleData.customerId || null;
+        if (customerIdToUse) {
+          const customerExists = await Customer.findOne({
+            where: { id: customerIdToUse, organizationId: orgId },
+            transaction,
+          });
+
+          if (!customerExists) {
+            customerIdToUse = null;
+          }
+        }
 
         const createdSale = await Sale.create(
           {
             id: saleId,
             organizationId: orgId,
-            customerId: saleData.customerId || null,
+            customerId: customerIdToUse,
             subtotal: saleData.subtotal ?? 0,
             tax: saleData.tax ?? 0,
             discount: saleData.discount ?? 0,
